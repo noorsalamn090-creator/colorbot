@@ -1,11 +1,7 @@
-import os
 import telebot
 import sqlite3
-from telebot.types import ReplyKeyboardMarkup
 
-TOKEN = os.getenv("TOKEN")
-CHANNEL = "@r_3_666"  # ضع معرف قناتك
-ADMIN_ID = 7052261939  # ضع ايديك
+TOKEN = "8487673303:AAEcVT2ikv0Av_cxTUGvziqUrDyESuqnVyo"
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -15,67 +11,96 @@ cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    points INTEGER DEFAULT 0,
-    invited_by INTEGER
+    invited_by INTEGER,
+    points INTEGER DEFAULT 0
 )
 """)
 conn.commit()
 
-def is_joined(user_id):
-    try:
-        member = bot.get_chat_member(CHANNEL, user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
 
-def menu():
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("📊 نقاطي", "🔗 رابط الدعوة")
-    markup.add("💰 سحب النقاط")
-    return markup
-
-@bot.message_handler(commands=["start"])
-def start(message):
-    user_id = message.from_user.id
-    args = message.text.split()
-
-    if not is_joined(user_id):
-        bot.send_message(user_id, f"اشترك بالقناة أولاً:\n{CHANNEL}")
-        return
-
-    cursor.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
-    user = cursor.fetchone()
-
-    if not user:
-        invited_by = None
-        if len(args) > 1:
-            invited_by = int(args[1])
-            cursor.execute("UPDATE users SET points = points + 1 WHERE user_id=?", (invited_by,))
-        cursor.execute("INSERT INTO users (user_id, invited_by) VALUES (?, ?)", (user_id, invited_by))
+# تسجيل مستخدم جديد
+def add_user(user_id, inviter=None):
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+    if cursor.fetchone() is None:
+        cursor.execute(
+            "INSERT INTO users (user_id, invited_by, points) VALUES (?, ?, 0)",
+            (user_id, inviter)
+        )
         conn.commit()
 
-    bot.send_message(user_id, "اهلاً بك", reply_markup=menu())
+        # إضافة نقطة للشخص الداعي
+        if inviter:
+            cursor.execute(
+                "UPDATE users SET points = points + 1 WHERE user_id=?",
+                (inviter,)
+            )
+            conn.commit()
 
-@bot.message_handler(func=lambda m: m.text == "📊 نقاطي")
+
+# جلب النقاط
+def get_points(user_id):
+    cursor.execute(
+        "SELECT points FROM users WHERE user_id=?",
+        (user_id,)
+    )
+    result = cursor.fetchone()
+    return result[0] if result else 0
+
+
+# أمر start
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+
+    args = message.text.split()
+
+    inviter = None
+
+    if len(args) > 1:
+        inviter = int(args[1])
+        if inviter == user_id:
+            inviter = None
+
+    add_user(user_id, inviter)
+
+    link = f"https://t.me/{bot.get_me().username}?start={user_id}"
+
+    points = get_points(user_id)
+
+    text = f"""
+👋 اهلاً بك
+
+🔗 رابط الدعوة الخاص بك:
+{link}
+
+⭐ نقاطك: {points}
+
+📢 ادعُ اصدقائك لتحصل على نقاط
+"""
+
+    bot.send_message(user_id, text)
+
+
+# عرض النقاط
+@bot.message_handler(commands=['points'])
 def points(message):
-    cursor.execute("SELECT points FROM users WHERE user_id=?", (message.from_user.id,))
-    points = cursor.fetchone()[0]
-    bot.send_message(message.from_user.id, f"نقاطك: {points}")
+    user_id = message.from_user.id
+    pts = get_points(user_id)
 
-@bot.message_handler(func=lambda m: m.text == "🔗 رابط الدعوة")
-def invite(message):
-    link = f"https://t.me/{bot.get_me().username}?start={message.from_user.id}"
-    bot.send_message(message.from_user.id, link)
+    bot.send_message(user_id, f"⭐ نقاطك: {pts}")
 
-@bot.message_handler(func=lambda m: m.text == "💰 سحب النقاط")
+
+# السحب (تجريبي)
+@bot.message_handler(commands=['withdraw'])
 def withdraw(message):
-    cursor.execute("SELECT points FROM users WHERE user_id=?", (message.from_user.id,))
-    points = cursor.fetchone()[0]
+    user_id = message.from_user.id
+    pts = get_points(user_id)
 
-    if points < 10:
-        bot.send_message(message.from_user.id, "الحد الأدنى للسحب 10 نقاط")
+    if pts < 5:
+        bot.send_message(user_id, "❌ تحتاج 5 نقاط على الأقل للسحب")
     else:
-        bot.send_message(message.from_user.id, "تم إرسال طلبك")
-        bot.send_message(ADMIN_ID, f"طلب سحب من {message.from_user.id}")
+        bot.send_message(user_id, "✅ تم طلب السحب، سيتم المراجعة")
 
+
+print("Bot running...")
 bot.infinity_polling()
