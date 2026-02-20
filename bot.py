@@ -1,13 +1,15 @@
  import telebot
 import sqlite3
 import os
-from telebot.types import ReplyKeyboardMarkup
+import time
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 
 TOKEN = os.getenv("TOKEN")
 
 bot = telebot.TeleBot(TOKEN)
 
-ADMIN_ID = 7052261939  # غيره الى ايديك
+ADMIN_ID = 7052261939  # حط ايديك
+CHANNEL = "@r_3_666"  # حط قناتك
 
 # قاعدة البيانات
 conn = sqlite3.connect("db.db", check_same_thread=False)
@@ -16,83 +18,214 @@ cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    points INTEGER DEFAULT 0
+    points INTEGER DEFAULT 0,
+    invited_by INTEGER,
+    last_gift INTEGER DEFAULT 0
 )
 """)
 
 conn.commit()
 
 
-# القائمة الرئيسية
-def menu():
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("📊 نقاطي")
-    return markup
+# تحقق الاشتراك
+def check_sub(user_id):
+    try:
+        member = bot.get_chat_member(CHANNEL, user_id)
+        return member.status in ["member", "creator", "administrator"]
+    except:
+        return False
 
 
-# ستارت
-@bot.message_handler(commands=['start'])
-def start(message):
+# القائمة
+def menu(user_id):
 
-    user_id = message.from_user.id
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
 
-    cursor.execute(
-        "INSERT OR IGNORE INTO users (user_id, points) VALUES (?,0)",
-        (user_id,)
-    )
+    kb.add("👥 دعوة", "⭐ نقاطي")
 
-    conn.commit()
+    kb.add("🎁 هدية يومية", "💰 سحب")
 
-    bot.send_message(
-        user_id,
-        "اهلا بك في البوت",
-        reply_markup=menu()
-    )
+    kb.add("📊 حسابي")
+
+    if user_id == ADMIN_ID:
+        kb.add("⚙️ لوحة الادمن")
+
+    return kb
 
 
-# عرض النقاط
-@bot.message_handler(func=lambda m: m.text == "📊 نقاطي")
-def my_points(message):
-
-    user_id = message.from_user.id
+# جلب نقاط
+def get_points(user_id):
 
     cursor.execute(
         "SELECT points FROM users WHERE user_id=?",
         (user_id,)
     )
 
-    points = cursor.fetchone()[0]
+    data = cursor.fetchone()
+
+    if data:
+        return data[0]
+
+    return 0
+
+
+# start
+@bot.message_handler(commands=['start'])
+def start(message):
+
+    user_id = message.from_user.id
+
+    if not check_sub(user_id):
+
+        bot.send_message(
+            user_id,
+            f"اشترك بالقناة:\n{CHANNEL}"
+        )
+
+        return
+
+    args = message.text.split()
+
+    cursor.execute(
+        "SELECT * FROM users WHERE user_id=?",
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+
+    if not user:
+
+        invited_by = None
+
+        if len(args) > 1:
+
+            invited_by = int(args[1])
+
+            if invited_by != user_id:
+
+                cursor.execute(
+                    "UPDATE users SET points = points + 1 WHERE user_id=?",
+                    (invited_by,)
+                )
+
+                bot.send_message(
+                    invited_by,
+                    "تمت إضافة نقطة من دعوة شخص"
+                )
+
+        cursor.execute(
+            "INSERT INTO users (user_id, invited_by) VALUES (?,?)",
+            (user_id, invited_by)
+        )
+
+        conn.commit()
+
+    link = f"https://t.me/{bot.get_me().username}?start={user_id}"
 
     bot.send_message(
         user_id,
-        f"نقاطك: {points}"
+        f"""
+اهلا بك
+
+نقاطك: {get_points(user_id)}
+
+رابط الدعوة:
+{link}
+""",
+        reply_markup=menu(user_id)
+    )
+
+
+# نقاطي
+@bot.message_handler(func=lambda m: m.text == "⭐ نقاطي")
+def points(message):
+
+    bot.send_message(
+        message.chat.id,
+        f"نقاطك: {get_points(message.from_user.id)}"
+    )
+
+
+# دعوة
+@bot.message_handler(func=lambda m: m.text == "👥 دعوة")
+def invite(message):
+
+    user_id = message.from_user.id
+
+    link = f"https://t.me/{bot.get_me().username}?start={user_id}"
+
+    bot.send_message(
+        message.chat.id,
+        link
+    )
+
+
+# هدية
+@bot.message_handler(func=lambda m: m.text == "🎁 هدية يومية")
+def gift(message):
+
+    user_id = message.from_user.id
+
+    cursor.execute(
+        "SELECT last_gift FROM users WHERE user_id=?",
+        (user_id,)
+    )
+
+    last = cursor.fetchone()[0]
+
+    now = int(time.time())
+
+    if now - last < 86400:
+
+        bot.send_message(
+            user_id,
+            "ارجع بعد 24 ساعة"
+        )
+
+        return
+
+    cursor.execute(
+        "UPDATE users SET points = points + 5, last_gift=? WHERE user_id=?",
+        (now, user_id)
+    )
+
+    conn.commit()
+
+    bot.send_message(
+        user_id,
+        "تم إضافة 5 نقاط"
+    )
+
+
+# سحب
+@bot.message_handler(func=lambda m: m.text == "💰 سحب")
+def withdraw(message):
+
+    pts = get_points(message.from_user.id)
+
+    if pts < 10:
+
+        bot.send_message(
+            message.chat.id,
+            "الحد الأدنى للسحب 10 نقاط"
+        )
+
+        return
+
+    bot.send_message(
+        ADMIN_ID,
+        f"طلب سحب من {message.from_user.id}\nنقاط: {pts}"
+    )
+
+    bot.send_message(
+        message.chat.id,
+        "تم إرسال طلبك"
     )
 
 
 # لوحة الادمن
-def admin_menu():
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("➕ اضافة نقاط", "➖ تصفير نقاط")
-    markup.row("📊 احصائيات")
-    return markup
-
-
-@bot.message_handler(commands=['admin'])
+@bot.message_handler(func=lambda m: m.text == "⚙️ لوحة الادمن")
 def admin(message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    bot.send_message(
-        message.chat.id,
-        "لوحة الادمن",
-        reply_markup=admin_menu()
-    )
-
-
-# احصائيات
-@bot.message_handler(func=lambda m: m.text == "📊 احصائيات")
-def stats(message):
 
     if message.from_user.id != ADMIN_ID:
         return
@@ -107,88 +240,6 @@ def stats(message):
     )
 
 
-# اضافة نقاط
-@bot.message_handler(func=lambda m: m.text == "➕ اضافة نقاط")
-def add_points(message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    msg = bot.send_message(
-        message.chat.id,
-        "ارسل: ID عدد_النقاط"
-    )
-
-    bot.register_next_step_handler(msg, process_add)
-
-
-def process_add(message):
-
-    try:
-
-        user_id, points = message.text.split()
-
-        cursor.execute(
-            "UPDATE users SET points = points + ? WHERE user_id=?",
-            (int(points), int(user_id))
-        )
-
-        conn.commit()
-
-        bot.send_message(
-            message.chat.id,
-            "تمت الاضافة"
-        )
-
-    except:
-
-        bot.send_message(
-            message.chat.id,
-            "خطأ"
-        )
-
-
-# تصفير نقاط
-@bot.message_handler(func=lambda m: m.text == "➖ تصفير نقاط")
-def reset_points(message):
-
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    msg = bot.send_message(
-        message.chat.id,
-        "ارسل ID"
-    )
-
-    bot.register_next_step_handler(msg, process_reset)
-
-
-def process_reset(message):
-
-    try:
-
-        user_id = int(message.text)
-
-        cursor.execute(
-            "UPDATE users SET points = 0 WHERE user_id=?",
-            (user_id,)
-        )
-
-        conn.commit()
-
-        bot.send_message(
-            message.chat.id,
-            "تم التصفير"
-        )
-
-    except:
-
-        bot.send_message(
-            message.chat.id,
-            "خطأ"
-        )
-
-
-print("Bot running...")
+print("Bot running")
 
 bot.infinity_polling()
