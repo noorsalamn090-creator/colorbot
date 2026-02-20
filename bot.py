@@ -1,84 +1,69 @@
 import telebot
 import sqlite3
+import os
 
-TOKEN = "8487673303:AAEcVT2ikv0Av_cxTUGvziqUrDyESuqnVyo"
+TOKEN = os.getenv("TOKEN")
 
 bot = telebot.TeleBot(TOKEN)
 
+# إنشاء قاعدة البيانات
 conn = sqlite3.connect("db.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    invited_by INTEGER,
-    points INTEGER DEFAULT 0
+    points INTEGER DEFAULT 0,
+    invited_by INTEGER
 )
 """)
+
 conn.commit()
-
-
-# تسجيل مستخدم جديد
-def add_user(user_id, inviter=None):
-    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
-    if cursor.fetchone() is None:
-        cursor.execute(
-            "INSERT INTO users (user_id, invited_by, points) VALUES (?, ?, 0)",
-            (user_id, inviter)
-        )
-        conn.commit()
-
-        # إضافة نقطة للشخص الداعي
-        if inviter:
-            cursor.execute(
-                "UPDATE users SET points = points + 1 WHERE user_id=?",
-                (inviter,)
-            )
-            conn.commit()
-
-
-# جلب النقاط
-def get_points(user_id):
-    cursor.execute(
-        "SELECT points FROM users WHERE user_id=?",
-        (user_id,)
-    )
-    result = cursor.fetchone()
-    return result[0] if result else 0
 
 
 # أمر start
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-
     args = message.text.split()
 
-    inviter = None
+    # إضافة المستخدم إذا غير موجود
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+    exists = cursor.fetchone()
 
-    if len(args) > 1:
-        inviter = int(args[1])
-        if inviter == user_id:
-            inviter = None
+    if not exists:
 
-    add_user(user_id, inviter)
+        invited_by = None
 
+        # إذا دخل عن طريق رابط دعوة
+        if len(args) > 1:
+            invited_by = int(args[1])
+
+            if invited_by != user_id:
+                cursor.execute("UPDATE users SET points = points + 1 WHERE user_id=?", (invited_by,))
+                conn.commit()
+
+                bot.send_message(invited_by, "🎉 شخص دخل من رابط الدعوة الخاص بك!\n+1 نقطة")
+
+        cursor.execute(
+            "INSERT INTO users (user_id, points, invited_by) VALUES (?, 0, ?)",
+            (user_id, invited_by)
+        )
+        conn.commit()
+
+    # إنشاء رابط الدعوة
     link = f"https://t.me/{bot.get_me().username}?start={user_id}"
 
-    points = get_points(user_id)
-
-    text = f"""
-👋 اهلاً بك
+    bot.send_message(user_id, f"""
+👋 أهلا بك في البوت
 
 🔗 رابط الدعوة الخاص بك:
 {link}
 
-⭐ نقاطك: {points}
+⭐ نقاطك: {get_points(user_id)}
 
-📢 ادعُ اصدقائك لتحصل على نقاط
-"""
-
-    bot.send_message(user_id, text)
+ارسل الرابط لأصدقائك واحصل على نقاط!
+""")
 
 
 # عرض النقاط
@@ -90,17 +75,16 @@ def points(message):
     bot.send_message(user_id, f"⭐ نقاطك: {pts}")
 
 
-# السحب (تجريبي)
-@bot.message_handler(commands=['withdraw'])
-def withdraw(message):
-    user_id = message.from_user.id
-    pts = get_points(user_id)
+# دالة جلب النقاط
+def get_points(user_id):
+    cursor.execute("SELECT points FROM users WHERE user_id=?", (user_id,))
+    result = cursor.fetchone()
 
-    if pts < 5:
-        bot.send_message(user_id, "❌ تحتاج 5 نقاط على الأقل للسحب")
-    else:
-        bot.send_message(user_id, "✅ تم طلب السحب، سيتم المراجعة")
+    if result:
+        return result[0]
+    return 0
 
 
 print("Bot running...")
+
 bot.infinity_polling()
