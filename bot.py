@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 from aiogram.filters import Command
@@ -6,13 +7,17 @@ from aiogram.filters import Command
 # حط توكن بوتك هنا
 TOKEN = "8555686519:AAGb-AiAYSgm0_mONFr5Hnwg0GfPiRpXyvM"
 
+# تشغيل logging
+logging.basicConfig(level=logging.INFO)
+
+# إنشاء البوت
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # تخزين نقاط المستخدمين
 user_points = {}
 
-# المنتجات
+# قائمة المنتجات
 products = {
     "buy_1k": {"points": 1000, "price": 1},
     "buy_10k": {"points": 10000, "price": 8},
@@ -25,8 +30,10 @@ products = {
 @dp.message(Command("start"))
 async def start(message: types.Message):
 
-    if message.from_user.id not in user_points:
-        user_points[message.from_user.id] = 0
+    user_id = message.from_user.id
+
+    if user_id not in user_points:
+        user_points[user_id] = 0
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -39,7 +46,9 @@ async def start(message: types.Message):
     )
 
     await message.answer(
-        f"اهلا بك 👋\n\nرصيدك الحالي: {user_points[message.from_user.id]} نقطة\n\nاختر الكمية للشحن:",
+        f"👋 أهلاً بك\n\n"
+        f"💰 رصيدك: {user_points[user_id]} نقطة\n\n"
+        f"اختر الكمية للشحن:",
         reply_markup=keyboard
     )
 
@@ -47,6 +56,7 @@ async def start(message: types.Message):
 @dp.callback_query(F.data.startswith("buy_"))
 async def buy(callback: types.CallbackQuery):
 
+    user_id = callback.from_user.id
     product = products[callback.data]
 
     prices = [
@@ -57,13 +67,13 @@ async def buy(callback: types.CallbackQuery):
     ]
 
     await bot.send_invoice(
-        chat_id=callback.from_user.id,
+        chat_id=user_id,
         title="شراء نقاط",
         description=f"شراء {product['points']} نقطة",
         payload=callback.data,
-        provider_token="",
-        currency="XTR",
-        prices=prices,
+        provider_token="",  # مهم للنجوم
+        currency="XTR",     # عملة النجوم
+        prices=prices
     )
 
 # تأكيد الدفع
@@ -73,22 +83,23 @@ async def pre_checkout(pre_checkout_query: types.PreCheckoutQuery):
 
 # بعد نجاح الدفع
 @dp.message(F.successful_payment)
-async def success(message: types.Message):
+async def successful_payment(message: types.Message):
 
+    user_id = message.from_user.id
     payload = message.successful_payment.invoice_payload
-    product = products[payload]
 
-    user_points[message.from_user.id] += product["points"]
+    product = products[payload]
+    user_points[user_id] += product["points"]
 
     await message.answer(
         f"✅ تم الدفع بنجاح!\n\n"
-        f"تم إضافة {product['points']} نقطة\n"
-        f"رصيدك الجديد: {user_points[message.from_user.id]} نقطة"
+        f"➕ تمت إضافة {product['points']} نقطة\n"
+        f"💰 رصيدك الجديد: {user_points[user_id]} نقطة"
     )
 
 # تشغيل البوت
 async def main():
-    print("Bot is running...")
+    print("Bot started successfully!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
